@@ -1,49 +1,42 @@
-// 동행복권 결과 자동 수집 → winners.json (직접 + 프록시 2단 우회)
-// 형식: [회차, n1..n6, 보너스]
+// 동행복권 자동 수집 → winners.json (직접 + 다중 프록시 폴백)
 const fs = require('fs');
 const FILE = 'winners.json';
 
-const HEADERS = {
-  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-  'Referer': 'https://www.dhlottery.co.kr/gameResult.do?method=byWin',
-  'Accept': 'application/json, text/javascript, */*; q=0.01',
-  'Accept-Language': 'ko-KR,ko;q=0.9',
-  'X-Requested-With': 'XMLHttpRequest'
-};
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
-async function tryJson(url, opts) {
-  try {
-    const res = await fetch(url, opts);
-    const text = await res.text();
-    try { return JSON.parse(text); }
-    catch { return { _html: text.slice(0, 60).replace(/\s+/g, ' ') }; }
-  } catch (e) {
-    return { _err: e.message };
-  }
+// 시도 순서: 직접 → 프록시들
+function endpoints(api) {
+  return [
+    { name: '직접',       url: api, headers: { 'User-Agent': UA, 'Referer': 'https://www.dhlottery.co.kr/gameResult.do?method=byWin', 'Accept': 'application/json, */*', 'X-Requested-With': 'XMLHttpRequest' } },
+    { name: 'codetabs',   url: `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(api)}`, headers: { 'User-Agent': UA } },
+    { name: 'allorigins', url: `https://api.allorigins.win/raw?url=${encodeURIComponent(api)}`,        headers: { 'User-Agent': UA } },
+    { name: 'corsproxy',  url: `https://corsproxy.io/?url=${encodeURIComponent(api)}`,                 headers: { 'User-Agent': UA } },
+  ];
 }
 
 async function getDraw(no) {
   const api = `https://www.dhlottery.co.kr/common.do?method=getLottoNumber&drwNo=${no}`;
-
-  // 1차: 직접 호출 (브라우저 헤더)
-  let data = await tryJson(api, { headers: HEADERS });
-
-  // 2차: 막혔으면 프록시 경유
-  if (data._html || data._err) {
-    console.log(`   ${no}회 직접 실패(${data._html || data._err}) → 프록시 재시도`);
-    const proxy = `https://api.allorigins.win/raw?url=${encodeURIComponent(api)}`;
-    data = await tryJson(proxy, { headers: { 'User-Agent': HEADERS['User-Agent'] } });
+  for (const ep of endpoints(api)) {
+    try {
+      const res = await fetch(ep.url, { headers: ep.headers, signal: AbortSignal.timeout(15000) });
+      const text = await res.text();
+      let data;
+      try { data = JSON.parse(text); }
+      catch { console.log(`   ${no}회 [${ep.name}] 실패: ${text.slice(0,40).replace(/\s+/g,' ')}`); continue; }
+      if (data.returnValue === 'success') {
+        console.log(`✅ ${no}회 [${ep.name}] 수신 (${data.drwNoDate})`);
+        return [data.drwNo, data.drwtNo1, data.drwtNo2, data.drwtNo3, data.drwtNo4, data.drwtNo5, data.drwtNo6, data.bnusNo];
+      }
+      if (data.returnValue === 'fail') {
+        console.log(`⏳ ${no}회 [${ep.name}] returnValue=fail → 아직 추첨 전 (연결 정상!)`);
+        return null;   // 연결은 됐고 회차가 없을 뿐 → 더 시도 불필요
+      }
+    } catch (e) {
+      console.log(`   ${no}회 [${ep.name}] 오류: ${e.message}`);
+    }
   }
-
-  if (data._html) { console.log(`❌ ${no}회: HTML 응답(차단) → ${data._html}`); return null; }
-  if (data._err)  { console.log(`❌ ${no}회: 네트워크 오류 → ${data._err}`); return null; }
-  if (data.returnValue !== 'success') {
-    console.log(`⏳ ${no}회: returnValue=${data.returnValue} → 아직 추첨 전 (연결 정상)`);
-    return null;
-  }
-  console.log(`✅ ${no}회: 데이터 수신 (${data.drwNoDate})`);
-  return [data.drwNo, data.drwtNo1, data.drwtNo2, data.drwtNo3,
-          data.drwtNo4, data.drwtNo5, data.drwtNo6, data.bnusNo];
+  console.log(`❌ ${no}회: 모든 경로 실패`);
+  return null;
 }
 
 (async () => {
@@ -59,7 +52,7 @@ async function getDraw(no) {
   }
   if (added) {
     fs.writeFileSync(FILE, JSON.stringify(arr));
-    console.log(`✅ ${added}회 추가. 최신 ${arr[arr.length - 1][0]}회`);
+    console.log(`✅ ${added}회 추가. 최신 ${arr[arr.length-1][0]}회`);
   } else {
     console.log('변경 없음');
   }
