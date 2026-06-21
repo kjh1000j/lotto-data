@@ -2,9 +2,9 @@ name: Update Lotto Data
 
 on:
   schedule:
-    # 매주 일요일 09:00 KST (00:00 UTC) — 토요일 추첨 다음날
-    - cron: '0 0 * * 0'
-  workflow_dispatch:        # Actions 탭에서 수동 실행 버튼
+    - cron: '0 17-23 * * 6'   # 토 17~23 UTC = 일 02~08시 KST
+    - cron: '0 0-13 * * 0'    # 일 00~13 UTC = 일 09~22시 KST
+  workflow_dispatch:
 
 permissions:
   contents: write           # winners.json 커밋/푸시 권한
